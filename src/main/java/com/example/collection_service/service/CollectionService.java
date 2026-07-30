@@ -73,7 +73,7 @@ public class CollectionService {
             }
             case BANK_TRANSFER -> finalPaymentStatus = PaymentStatus.SUCCESS;
             default -> throw new BusinessException("Desteklenmeyen ödeme yöntemi!", HttpStatus.BAD_REQUEST);
-
+        }
         // ENTITY OLUŞTURMA (transactionId ile)
         PaymentEntity payment = PaymentEntity.builder()
                 .applicationId(requestDTO.getApplicationId())
