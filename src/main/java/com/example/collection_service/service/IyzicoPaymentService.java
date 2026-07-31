@@ -1,13 +1,16 @@
 package com.example.collection_service.service;
 
+import com.example.collection_service.dto.*;
 import com.iyzipay.Options;
 import com.iyzipay.model.*;
 import com.iyzipay.request.CreatePaymentRequest;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -16,73 +19,79 @@ import java.util.List;
 @RequiredArgsConstructor
 public class IyzicoPaymentService {
 
-    // Konfigürasyonda hazırladığımız anahtarları enjekte ediyoruz
     private final Options options;
 
-    public Payment payWithIyzico(String transactionId, BigDecimal price, String cardNumber, String expireMonth, String expireYear) {
+    public Payment payWithIyzico(String transactionId, PaymentRequestDTO requestDTO, ApplicationDetailResponseDTO appData, CustomerCardResponseDTO selectedCard) {
 
         CreatePaymentRequest request = new CreatePaymentRequest();
         request.setLocale(Locale.TR.getValue());
         request.setConversationId(transactionId);
-        request.setPrice(price);
-        request.setPaidPrice(price); // Taksit komisyonu eklemediğimizi varsayıyoruz
-        request.setCurrency(Currency.TRY.name());
-        request.setInstallment(1); // Test için peşin çekim yapıyoruz
+        request.setPrice(appData.getPrice());
+        request.setPaidPrice(appData.getPrice());
+        request.setCurrency(appData.getCurrency());
+        request.setInstallment(requestDTO.getInstallmentCount());
+
         request.setPaymentChannel(PaymentChannel.WEB.name());
         request.setPaymentGroup(PaymentGroup.PRODUCT.name());
 
-        // 1. KART BİLGİLERİ
+        // Dış servisten gelen verileri ayıklıyoruz
+        CustomerResponseDTO customer = appData.getCustomer();
+        FullLocationResponseDTO addressDto = customer.getAddress();
+        InsuranceProductResponseDTO product = appData.getProduct();
+
+        String fullName = customer.getFirstName() + " " + customer.getLastName();
+        String combinedAddress = addressDto.getDistrictName() + ", " +
+                addressDto.getCityName() + ", " +
+                addressDto.getCountryName();
+
+        // 1. KART BİLGİLERİ (Kullanıcının gönderdiği güvenli DTO'dan)
         PaymentCard paymentCard = new PaymentCard();
-        paymentCard.setCardHolderName("Deniz Kahramanoglu"); // Gerçekte DTO'dan gelmeli
-        paymentCard.setCardNumber(cardNumber);
-        paymentCard.setExpireMonth(expireMonth);
-        paymentCard.setExpireYear(expireYear);
-        paymentCard.setCvc("123"); // Test ortamında 123 geçerlidir
-        paymentCard.setRegisterCard(0);
+        paymentCard.setCardHolderName(fullName);
+        paymentCard.setCardNumber(selectedCard.getCardNumber());
+        paymentCard.setExpireMonth(String.format("%02d", selectedCard.getExpireMonth()));
+        paymentCard.setExpireYear(String.valueOf(selectedCard.getExpireYear()));
+        paymentCard.setCvc(requestDTO.getCvcNo());
+        paymentCard.setRegisterCard(1);
         request.setPaymentCard(paymentCard);
 
-        // 2. MÜŞTERİ BİLGİLERİ (Zorunlu)
-        Buyer buyer = new Buyer();
-        buyer.setId("BY789");
-        buyer.setName("Deniz");
-        buyer.setSurname("Kahramanoglu");
-        buyer.setGsmNumber("+905555555555");
-        buyer.setEmail("deniz@example.com");
-        buyer.setIdentityNumber("74300864791");
-        buyer.setLastLoginDate("2026-07-30 11:55:16");
-        buyer.setRegistrationDate("2026-07-06 12:00:00");
-        buyer.setRegistrationAddress("Corlu Muhendislik Fakultesi");
-        buyer.setIp("85.34.78.112");
-        buyer.setCity("Tekirdag");
-        buyer.setCountry("Turkey");
-        buyer.setZipCode("59860");
-        request.setBuyer(buyer);
+        // --- DİNAMİK IP ÇÖZÜMLEME BAŞLANGICI ---
+        String clientIp = getString();
 
-        // 3. ADRES BİLGİLERİ (Zorunlu)
+        //MÜŞTERİ BİLGİLERİ (Application servisinden)
+        Buyer buyer = new Buyer();
+        buyer.setId(customer.getIdentityNumber());
+        buyer.setName(customer.getFirstName());
+        buyer.setSurname(customer.getLastName());
+        buyer.setGsmNumber(customer.getPhoneNumber());
+        buyer.setEmail(customer.getEmail());
+        buyer.setIdentityNumber(customer.getIdentityNumber());
+        buyer.setRegistrationAddress(combinedAddress);
+        buyer.setCity(addressDto.getCityName());
+        buyer.setCountry(addressDto.getCountryName());
+        buyer.setIp(clientIp);
+        request.setBuyer(buyer);
         Address address = new Address();
-        address.setContactName("Deniz Kahramanoglu");
-        address.setCity("Tekirdag");
-        address.setCountry("Turkey");
-        address.setAddress("Corlu Muhendislik Fakultesi, Namik Kemal Universitesi");
-        address.setZipCode("59860");
+        address.setContactName(fullName);
+        address.setCity(addressDto.getCityName());
+        address.setCountry(addressDto.getCountryName());
+        address.setAddress(combinedAddress);
         request.setShippingAddress(address);
         request.setBillingAddress(address);
-
-        // 4. SEPET BİLGİLERİ (Zorunlu)
         List<BasketItem> basketItems = new ArrayList<>();
         BasketItem item = new BasketItem();
-        item.setId("BI101");
-        item.setName("Hayat Sigortasi Policesi");
+        item.setId(product.getCode());
+        item.setName(product.getName());
         item.setCategory1("Sigorta");
-        item.setItemType(BasketItemType.VIRTUAL.name()); // Fiziksel ürün değil
-        item.setPrice(price);
+        item.setItemType(BasketItemType.VIRTUAL.name());
+        item.setPrice(appData.getPrice());
         basketItems.add(item);
+
         request.setBasketItems(basketItems);
 
         // 5. ISTEGI IYZICO'YA GONDER
-        log.info("[IYZICO] {} ID'li islem iyzico'ya gonderiliyor...", transactionId);
+        log.info("[IYZICO] {} ID'li islem ({}) kullanicisi icin gonderiliyor. Tutar: {} {}, IP: {}",
+                transactionId, fullName, appData.getPrice(), appData.getCurrency(), clientIp);
 
-        // Asıl sihir burada gerçekleşiyor!
         Payment payment = Payment.create(request, options);
 
         log.info("[IYZICO] Gelen cevap statusu: {}", payment.getStatus());
@@ -91,5 +100,21 @@ public class IyzicoPaymentService {
         }
 
         return payment;
+    }
+
+    private static String getString() {
+        String clientIp = "127.0.0.1";
+        ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        if (attributes != null) {
+            HttpServletRequest httpRequest = attributes.getRequest();
+            clientIp = httpRequest.getHeader("X-Forwarded-For");
+            if (clientIp == null || clientIp.isEmpty()) {
+                clientIp = httpRequest.getRemoteAddr();
+            }
+            if (clientIp != null && clientIp.contains(",")) {
+                clientIp = clientIp.split(",")[0].trim();
+            }
+        }
+        return clientIp;
     }
 }

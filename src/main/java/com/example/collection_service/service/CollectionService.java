@@ -1,6 +1,8 @@
 package com.example.collection_service.service;
 
 import com.example.collection_service.client.ApplicationServiceClient;
+import com.example.collection_service.dto.ApplicationDetailResponseDTO;
+import com.example.collection_service.dto.CustomerCardResponseDTO;
 import com.example.collection_service.dto.PaymentRequestDTO;
 import com.example.collection_service.dto.PaymentResponseDTO;
 import com.example.collection_service.entity.InstallmentPlanEntity;
@@ -10,7 +12,6 @@ import com.example.collection_service.enums.PaymentStatus;
 import com.example.collection_service.exception.BusinessException;
 import com.example.collection_service.mapper.PaymentMapper;
 import com.example.collection_service.repository.PaymentRepository;
-import com.example.collection_service.util.CreditCardValidationUtil;
 import com.iyzipay.model.Payment;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -42,63 +43,81 @@ public class CollectionService {
         String transactionId = UUID.randomUUID().toString();
         PaymentStatus finalPaymentStatus;
 
-        switch (requestDTO.getPaymentMethod()) {
-            case CREDIT_CARD -> {
-                // 1. Kendi içimizdeki güvenlik kontrolleri (Luhn vs.)
-                CreditCardValidationUtil.validateCreditCard(
-                        requestDTO.getCardNumber(),
-                        requestDTO.getExpireMonth(),
-                        requestDTO.getExpireYear(),
-                        clock
-                );
+        log.info("Application Service'ten {} ID'li başvuru bilgileri çekiliyor...",
+                requestDTO.getApplicationId());
 
-                // 2. GERÇEK İYZİCO İSTEĞİNİ AT (SENKRON - Bekler ve cevabı alır)
+        ApplicationDetailResponseDTO appData =
+                applicationServiceClient.getApplicationDetails(requestDTO.getApplicationId());
+
+        CustomerCardResponseDTO selectedCard = appData.getCustomer()
+                .getCards()
+                .stream()
+                .filter(card -> card.getId().equals(requestDTO.getCardId()))
+                .findFirst()
+                .orElseThrow(() -> new BusinessException("Seçilen kart bulunamadı!", HttpStatus.NOT_FOUND));
+
+        switch (requestDTO.getPaymentMethod()) {
+
+            case CREDIT_CARD -> {
+
+                if (!"TRY".equalsIgnoreCase(appData.getCurrency())
+                        && requestDTO.getInstallmentCount() > 1) {
+                    throw new BusinessException(
+                            "TRY dışındaki para birimleri (EUR, USD) için taksit yapılamaz, tek çekim yapmalısınız!",
+                            HttpStatus.BAD_REQUEST);
+                }
+
                 Payment iyzicoResponse = iyzicoPaymentService.payWithIyzico(
                         transactionId,
-                        requestDTO.getAmount(),
-                        requestDTO.getCardNumber(),
-                        String.format("%02d", requestDTO.getExpireMonth()), // 1 ise "01" yapar
-                        String.valueOf(requestDTO.getExpireYear())
-                );
+                        requestDTO,
+                        appData,
+                        selectedCard);
 
-                // 3. İyzico'dan dönen cevaba göre statüyü belirle
                 if ("success".equalsIgnoreCase(iyzicoResponse.getStatus())) {
                     finalPaymentStatus = PaymentStatus.SUCCESS;
-                    log.info("İyzico Ödemesi Başarılı! Transaction ID: {}", transactionId);
+                    log.info("Card Token: {}", iyzicoResponse.getCardToken());
+                    log.info("Card User Key: {}", iyzicoResponse.getCardUserKey());
+                    log.info("Last Four Digits: {}", iyzicoResponse.getLastFourDigits());
                 } else {
                     log.error("İyzico Ödemesi Reddedildi! Hata: {}", iyzicoResponse.getErrorMessage());
-                    // Kullanıcıya anında hatayı dönüyoruz
-                    throw new BusinessException("Ödeme banka tarafından reddedildi: " + iyzicoResponse.getErrorMessage(), HttpStatus.BAD_REQUEST);
+                    throw new BusinessException(
+                            "Ödeme banka tarafından reddedildi: " + iyzicoResponse.getErrorMessage(),
+                            HttpStatus.BAD_REQUEST);
                 }
             }
+
             case BANK_TRANSFER -> finalPaymentStatus = PaymentStatus.SUCCESS;
-            default -> throw new BusinessException("Desteklenmeyen ödeme yöntemi!", HttpStatus.BAD_REQUEST);
+
+            default -> throw new BusinessException(
+                    "Desteklenmeyen ödeme yöntemi!",
+                    HttpStatus.BAD_REQUEST);
         }
-        // ENTITY OLUŞTURMA (transactionId ile)
+
         PaymentEntity payment = PaymentEntity.builder()
                 .applicationId(requestDTO.getApplicationId())
-                .amount(requestDTO.getAmount())
-                .currency(requestDTO.getCurrency())
+                .amount(appData.getPrice())
+                .currency(appData.getCurrency())
                 .paymentMethod(requestDTO.getPaymentMethod())
                 .paymentStatus(finalPaymentStatus)
                 .transactionId(transactionId)
                 .build();
 
-        List<InstallmentPlanEntity> installments = createInstallmentPlans(payment, requestDTO.getInstallmentCount());
+        List<InstallmentPlanEntity> installments =
+                createInstallmentPlans(payment, requestDTO.getInstallmentCount());
 
-        // Ödeme başarılıysa ve taksit planı varsa ilk taksiti PAID yap
         if (!installments.isEmpty()) {
             installments.getFirst().setStatus(InstallmentStatus.PAID);
         }
 
         payment.setInstallmentPlans(installments);
+
         PaymentEntity savedPayment = paymentRepository.save(payment);
 
         return paymentMapper.toResponseDTO(savedPayment);
     }
 
     public PaymentResponseDTO getPaymentByApplicationId(Long applicationId) {
-        PaymentEntity payment = paymentRepository.findByApplicationId(applicationId)
+        PaymentEntity payment = paymentRepository.findTopByApplicationIdOrderByIdDesc(applicationId)
                 .orElseThrow(() -> new BusinessException("Bu başvuruya ait ödeme kaydı bulunamadı! ID: " + applicationId, HttpStatus.NOT_FOUND));
 
         return paymentMapper.toResponseDTO(payment);

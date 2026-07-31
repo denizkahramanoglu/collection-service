@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 @Builder
@@ -23,4 +24,5 @@ public class ApplicationDetailResponseDTO {
     // Dış servislerden gelecek zenginleştirilmiş nesneler
     private CustomerResponseDTO customer;
     private InsuranceProductResponseDTO product;
+    private List<CustomerCardResponseDTO> cards;
 }
