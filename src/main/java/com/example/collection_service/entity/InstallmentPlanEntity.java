@@ -40,4 +40,5 @@ public class InstallmentPlanEntity extends BaseEntity {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 50)
     private InstallmentStatus status;
+
 }
