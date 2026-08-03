@@ -10,6 +10,7 @@ import java.util.List;
 @Getter
 @Setter
 public class PaymentResponseDTO {
+
     private Long id;
     private Long applicationId;
     private BigDecimal amount;

@@ -15,13 +15,10 @@ import java.util.List;
 @AllArgsConstructor
 public class ApplicationDetailResponseDTO {
 
-    // Başvuruya ait temel bilgiler
     private Long applicationId;
     private BigDecimal price;
     private String currency;
     private LocalDateTime createdAt;
-
-    // Dış servislerden gelecek zenginleştirilmiş nesneler
     private CustomerResponseDTO customer;
     private InsuranceProductResponseDTO product;
     private List<CustomerCardResponseDTO> cards;

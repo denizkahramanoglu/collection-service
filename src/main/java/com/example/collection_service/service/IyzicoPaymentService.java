@@ -1,6 +1,7 @@
 package com.example.collection_service.service;
 
 import com.example.collection_service.dto.*;
+import com.example.collection_service.util.NetworkUtil;
 import com.iyzipay.Options;
 import com.iyzipay.model.*;
 import com.iyzipay.request.CreatePaymentRequest;
@@ -10,7 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
-
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -23,41 +24,58 @@ public class IyzicoPaymentService {
 
     public Payment payWithIyzico(String transactionId, PaymentRequestDTO requestDTO, ApplicationDetailResponseDTO appData, CustomerCardResponseDTO selectedCard) {
 
+        PaymentCard paymentCard = createPaymentCard(appData, selectedCard, requestDTO.getCvcNo());
+        paymentCard.setRegisterCard(1);
+
+        CreatePaymentRequest request = buildIyzicoRequest(
+                transactionId,
+                appData.getPrice(),
+                requestDTO.getInstallmentCount(),
+                appData,
+                paymentCard,
+                appData.getProduct().getName()
+        );
+
+        log.info("[IYZICO] {} ID'li islem gonderiliyor. Tutar: {}", transactionId, appData.getPrice());
+        return Payment.create(request, options);
+    }
+    public Payment paySingleInstallmentWithIyzico(String transactionId, BigDecimal price, ApplicationDetailResponseDTO appData, CustomerCardResponseDTO selectedCard, String cvc) {
+
+
+        PaymentCard paymentCard = createPaymentCard(appData, selectedCard, cvc);
+        CreatePaymentRequest request = buildIyzicoRequest(transactionId, price, 1, appData, paymentCard, appData.getProduct().getName() + " - Taksit Ödemesi");
+
+        log.info("[IYZICO-TAKSIT] {} ID'li tek taksit islemi icin gonderiliyor. Tutar: {} {}", transactionId, price, appData.getCurrency());
+        Payment payment = Payment.create(request, options);
+        log.info("[IYZICO-TAKSIT] Gelen cevap statusu: {}", payment.getStatus());
+        if ("failure".equalsIgnoreCase(payment.getStatus())) {
+            log.error("[IYZICO-TAKSIT] Hata detayi: {}", payment.getErrorMessage());
+        }
+
+        return payment;
+    }
+    private CreatePaymentRequest buildIyzicoRequest(String transactionId, BigDecimal price, int installment, ApplicationDetailResponseDTO appData, PaymentCard paymentCard, String basketItemName) {
+
         CreatePaymentRequest request = new CreatePaymentRequest();
         request.setLocale(Locale.TR.getValue());
         request.setConversationId(transactionId);
-        request.setPrice(appData.getPrice());
-        request.setPaidPrice(appData.getPrice());
+        request.setPrice(price);
+        request.setPaidPrice(price);
         request.setCurrency(appData.getCurrency());
-        request.setInstallment(requestDTO.getInstallmentCount());
-
+        request.setInstallment(installment);
         request.setPaymentChannel(PaymentChannel.WEB.name());
         request.setPaymentGroup(PaymentGroup.PRODUCT.name());
-
-        // Dış servisten gelen verileri ayıklıyoruz
         CustomerResponseDTO customer = appData.getCustomer();
         FullLocationResponseDTO addressDto = customer.getAddress();
-        InsuranceProductResponseDTO product = appData.getProduct();
 
         String fullName = customer.getFirstName() + " " + customer.getLastName();
-        String combinedAddress = addressDto.getDistrictName() + ", " +
-                addressDto.getCityName() + ", " +
-                addressDto.getCountryName();
+        String combinedAddress = addressDto.getDistrictName() + ", " + addressDto.getCityName() + ", " + addressDto.getCountryName();
+        String clientIp = NetworkUtil.getClientIp();
 
-        // 1. KART BİLGİLERİ (Kullanıcının gönderdiği güvenli DTO'dan)
-        PaymentCard paymentCard = new PaymentCard();
-        paymentCard.setCardHolderName(fullName);
-        paymentCard.setCardNumber(selectedCard.getCardNumber());
-        paymentCard.setExpireMonth(String.format("%02d", selectedCard.getExpireMonth()));
-        paymentCard.setExpireYear(String.valueOf(selectedCard.getExpireYear()));
-        paymentCard.setCvc(requestDTO.getCvcNo());
-        paymentCard.setRegisterCard(1);
+        // Kart Bilgisi
         request.setPaymentCard(paymentCard);
 
-        // --- DİNAMİK IP ÇÖZÜMLEME BAŞLANGICI ---
-        String clientIp = getString();
-
-        //MÜŞTERİ BİLGİLERİ (Application servisinden)
+        // Müşteri (Buyer) Bilgisi
         Buyer buyer = new Buyer();
         buyer.setId(customer.getIdentityNumber());
         buyer.setName(customer.getFirstName());
@@ -70,6 +88,8 @@ public class IyzicoPaymentService {
         buyer.setCountry(addressDto.getCountryName());
         buyer.setIp(clientIp);
         request.setBuyer(buyer);
+
+        // Adres Bilgisi
         Address address = new Address();
         address.setContactName(fullName);
         address.setCity(addressDto.getCityName());
@@ -77,44 +97,30 @@ public class IyzicoPaymentService {
         address.setAddress(combinedAddress);
         request.setShippingAddress(address);
         request.setBillingAddress(address);
+
+        // Sepet Bilgisi
         List<BasketItem> basketItems = new ArrayList<>();
         BasketItem item = new BasketItem();
-        item.setId(product.getCode());
-        item.setName(product.getName());
+        item.setId(appData.getProduct().getCode());
+        item.setName(basketItemName);
         item.setCategory1("Sigorta");
         item.setItemType(BasketItemType.VIRTUAL.name());
-        item.setPrice(appData.getPrice());
+        item.setPrice(price);
         basketItems.add(item);
-
         request.setBasketItems(basketItems);
 
-        // 5. ISTEGI IYZICO'YA GONDER
-        log.info("[IYZICO] {} ID'li islem ({}) kullanicisi icin gonderiliyor. Tutar: {} {}, IP: {}",
-                transactionId, fullName, appData.getPrice(), appData.getCurrency(), clientIp);
-
-        Payment payment = Payment.create(request, options);
-
-        log.info("[IYZICO] Gelen cevap statusu: {}", payment.getStatus());
-        if ("failure".equalsIgnoreCase(payment.getStatus())) {
-            log.error("[IYZICO] Hata detayi: {}", payment.getErrorMessage());
-        }
-
-        return payment;
+        return request;
     }
+    private PaymentCard createPaymentCard(ApplicationDetailResponseDTO appData, CustomerCardResponseDTO selectedCard, String cvc) {
+        String fullName = appData.getCustomer().getFirstName() + " " + appData.getCustomer().getLastName();
 
-    private static String getString() {
-        String clientIp = "127.0.0.1";
-        ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-        if (attributes != null) {
-            HttpServletRequest httpRequest = attributes.getRequest();
-            clientIp = httpRequest.getHeader("X-Forwarded-For");
-            if (clientIp == null || clientIp.isEmpty()) {
-                clientIp = httpRequest.getRemoteAddr();
-            }
-            if (clientIp != null && clientIp.contains(",")) {
-                clientIp = clientIp.split(",")[0].trim();
-            }
-        }
-        return clientIp;
+        PaymentCard paymentCard = new PaymentCard();
+        paymentCard.setCardHolderName(fullName);
+        paymentCard.setCardNumber(selectedCard.getCardNumber());
+        paymentCard.setExpireMonth(String.format("%02d", selectedCard.getExpireMonth()));
+        paymentCard.setExpireYear(String.valueOf(selectedCard.getExpireYear()));
+        paymentCard.setCvc(cvc);
+
+        return paymentCard;
     }
 }

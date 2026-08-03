@@ -12,6 +12,7 @@ import com.example.collection_service.enums.PaymentStatus;
 import com.example.collection_service.exception.BusinessException;
 import com.example.collection_service.mapper.PaymentMapper;
 import com.example.collection_service.repository.PaymentRepository;
+import com.example.collection_service.util.BusinessRuleValidator;
 import com.iyzipay.model.Payment;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -43,11 +44,8 @@ public class CollectionService {
         String transactionId = UUID.randomUUID().toString();
         PaymentStatus finalPaymentStatus;
 
-        log.info("Application Service'ten {} ID'li başvuru bilgileri çekiliyor...",
-                requestDTO.getApplicationId());
-
-        ApplicationDetailResponseDTO appData =
-                applicationServiceClient.getApplicationDetails(requestDTO.getApplicationId());
+        log.info("Application Service'ten {} ID'li başvuru bilgileri çekiliyor...", requestDTO.getApplicationId());
+        ApplicationDetailResponseDTO appData = applicationServiceClient.getApplicationDetails(requestDTO.getApplicationId());
 
         CustomerCardResponseDTO selectedCard = appData.getCustomer()
                 .getCards()
@@ -60,38 +58,19 @@ public class CollectionService {
 
             case CREDIT_CARD -> {
 
-                if (!"TRY".equalsIgnoreCase(appData.getCurrency())
-                        && requestDTO.getInstallmentCount() > 1) {
-                    throw new BusinessException(
-                            "TRY dışındaki para birimleri (EUR, USD) için taksit yapılamaz, tek çekim yapmalısınız!",
-                            HttpStatus.BAD_REQUEST);
-                }
-
-                Payment iyzicoResponse = iyzicoPaymentService.payWithIyzico(
-                        transactionId,
-                        requestDTO,
-                        appData,
-                        selectedCard);
+                boolean isForeignCurrencyInstallment = !"TRY".equalsIgnoreCase(appData.getCurrency()) && requestDTO.getInstallmentCount() > 1;
+                BusinessRuleValidator.isFalse(isForeignCurrencyInstallment, "TRY dışındaki para birimleri için taksit yapılamaz!", HttpStatus.BAD_REQUEST);
+                Payment iyzicoResponse = iyzicoPaymentService.payWithIyzico(transactionId, requestDTO, appData, selectedCard);
 
                 if ("success".equalsIgnoreCase(iyzicoResponse.getStatus())) {
                     finalPaymentStatus = PaymentStatus.SUCCESS;
-                    log.info("Card Token: {}", iyzicoResponse.getCardToken());
-                    log.info("Card User Key: {}", iyzicoResponse.getCardUserKey());
-                    log.info("Last Four Digits: {}", iyzicoResponse.getLastFourDigits());
                 } else {
                     log.error("İyzico Ödemesi Reddedildi! Hata: {}", iyzicoResponse.getErrorMessage());
-                    throw new BusinessException(
-                            "Ödeme banka tarafından reddedildi: " + iyzicoResponse.getErrorMessage(),
-                            HttpStatus.BAD_REQUEST);
+                    throw new BusinessException("Ödeme banka tarafından reddedildi: " + iyzicoResponse.getErrorMessage(), HttpStatus.BAD_REQUEST);
                 }
             }
-
             case BANK_TRANSFER -> finalPaymentStatus = PaymentStatus.SUCCESS;
-
-            default -> throw new BusinessException(
-                    "Desteklenmeyen ödeme yöntemi!",
-                    HttpStatus.BAD_REQUEST);
-        }
+            default -> throw new BusinessException("Desteklenmeyen ödeme yöntemi!", HttpStatus.BAD_REQUEST);}
 
         PaymentEntity payment = PaymentEntity.builder()
                 .applicationId(requestDTO.getApplicationId())
@@ -110,7 +89,6 @@ public class CollectionService {
         }
 
         payment.setInstallmentPlans(installments);
-
         PaymentEntity savedPayment = paymentRepository.save(payment);
 
         return paymentMapper.toResponseDTO(savedPayment);
@@ -124,14 +102,11 @@ public class CollectionService {
     }
 
     private List<InstallmentPlanEntity> createInstallmentPlans(PaymentEntity payment, int installmentCount) {
-        if (installmentCount <= 0) {
-            throw new BusinessException("Taksit sayısı 0'dan büyük olmalıdır!", HttpStatus.BAD_REQUEST);
-        }
 
+        BusinessRuleValidator.isTrue(installmentCount > 0, "Taksit sayısı 0'dan büyük olmalıdır!", HttpStatus.BAD_REQUEST);
         BigDecimal totalAmount = payment.getAmount();
         BigDecimal baseInstallmentAmount = totalAmount.divide(BigDecimal.valueOf(installmentCount), 2, RoundingMode.HALF_UP);
         BigDecimal remainder = totalAmount.subtract(baseInstallmentAmount.multiply(BigDecimal.valueOf(installmentCount)));
-
         List<InstallmentPlanEntity> plans = new ArrayList<>(installmentCount);
         LocalDate today = LocalDate.now(clock);
 
