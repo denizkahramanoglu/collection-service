@@ -27,6 +27,7 @@ public class IyzicoPaymentService {
         PaymentCard paymentCard = createPaymentCard(appData, selectedCard, requestDTO.getCvcNo());
         paymentCard.setRegisterCard(1);
 
+
         CreatePaymentRequest request = buildIyzicoRequest(
                 transactionId,
                 appData.getPrice(),

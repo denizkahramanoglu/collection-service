@@ -104,7 +104,7 @@ class CollectionServiceTest {
     @Test
     void shouldProcessCollection_BankTransfer_Successfully() {
         // Arrange
-        requestDTO.setPaymentMethod(PaymentMethod.BANK_TRANSFER); // Enum adını kendi projene göre düzenle
+        requestDTO.setPaymentMethod(PaymentMethod.CASH);
         when(applicationServiceClient.getApplicationDetails(100L)).thenReturn(appData);
 
         PaymentEntity savedPayment = PaymentEntity.builder().build();

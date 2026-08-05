@@ -9,4 +9,5 @@ import java.util.Optional;
 public interface PaymentRepository extends JpaRepository<PaymentEntity, Long> {
 
     Optional<PaymentEntity> findTopByApplicationIdOrderByIdDesc(Long applicationId);
+
 }

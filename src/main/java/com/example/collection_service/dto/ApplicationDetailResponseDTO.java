@@ -1,5 +1,6 @@
 package com.example.collection_service.dto;
 
+import com.example.collection_service.enums.PaymentMethod;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -22,4 +23,8 @@ public class ApplicationDetailResponseDTO {
     private CustomerResponseDTO customer;
     private InsuranceProductResponseDTO product;
     private List<CustomerCardResponseDTO> cards;
+    private PaymentMethod paymentMethod;
+    private Integer installmentCount;
+    private Long cardId;
+
 }
