@@ -24,7 +24,6 @@ public class ApplicationDetailResponseDTO {
     private InsuranceProductResponseDTO product;
     private List<CustomerCardResponseDTO> cards;
     private PaymentMethod paymentMethod;
-    private Integer installmentCount;
     private Long cardId;
 
 }

@@ -21,6 +21,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.example.collection_service.service.InstallmentService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
@@ -34,67 +35,64 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class CollectionService {
 
+
+
     private final PaymentRepository paymentRepository;
     private final PaymentMapper paymentMapper;
     private final Clock clock;
     private final ApplicationServiceClient applicationServiceClient;
     private final PaymentStrategyFactory paymentStrategyFactory;
+    private final InstallmentService installmentService;
 
+    /**
+     * Yeni bir tahsilat süreci başlatır, ödeme stratejisini çalıştırır, ana ödeme kaydını oluşturur
+     * ve talep edilmişse taksitlendirme sürecini tetikler.
+     *
+     * @param requestDTO Tahsilat isteği için gerekli verileri barındıran {@link CollectionRequestDTO} nesnesi
+     * @return Tahsilat işlem sonucunu ve mesajını içeren {@link CollectionResponseDTO} nesnesi
+     */
     @Transactional
-    public CollectionResponseDTO initiateCollection(CollectionRequestDTO collectionRequestDTO) {
-        log.info("Application {} tarafından tahsilat isteği alındı. Miktar: {} {}", 
-                collectionRequestDTO.getApplicationId(), 
-                collectionRequestDTO.getAmount(),
-                collectionRequestDTO.getCurrency());
+    public CollectionResponseDTO initiateCollection(CollectionRequestDTO requestDTO) {
+        log.info("Application {} tarafından tahsilat isteği alındı. Miktar: {} {}",
+                requestDTO.getApplicationId(),
+                requestDTO.getAmount(),
+                requestDTO.getCurrency());
 
         String transactionId = UUID.randomUUID().toString();
 
-        // ApplicationDetailResponseDTO oluştur (CollectionRequestDTO'dan müşteri, kartlar ve ürün bilgisini al)
         ApplicationDetailResponseDTO appData = ApplicationDetailResponseDTO.builder()
-                .applicationId(collectionRequestDTO.getApplicationId())
-                .price(collectionRequestDTO.getAmount())
-                .currency(collectionRequestDTO.getCurrency())
-                .customer(collectionRequestDTO.getCustomer())
-                .cards(collectionRequestDTO.getCards())
-                .product(collectionRequestDTO.getProduct())
+                .applicationId(requestDTO.getApplicationId())
+                .price(requestDTO.getAmount())
+                .currency(requestDTO.getCurrency())
+                .customer(requestDTO.getCustomer())
+                .cards(requestDTO.getCards())
+                .product(requestDTO.getProduct())
                 .build();
 
-        // CollectionRequestDTO'dan PaymentRequestDTO oluştur
         PaymentRequestDTO paymentRequestDTO = PaymentRequestDTO.builder()
-                .applicationId(collectionRequestDTO.getApplicationId())
-                .paymentMethod(collectionRequestDTO.getPaymentMethod())
-                .installmentCount(collectionRequestDTO.getInstallmentCount())
-                .cardId(collectionRequestDTO.getCardId())
-                .cvcNo(collectionRequestDTO.getCvcNo())
+                .applicationId(requestDTO.getApplicationId())
+                .paymentMethod(requestDTO.getPaymentMethod())
+                .installmentCount(1)
+                .cardId(requestDTO.getCardId())
+                .cvcNo(requestDTO.getCvcNo())
                 .build();
 
-        // Doğru stratejiyi fabrikadan iste ve çalıştır (Polymorphism)
-        PaymentStrategy strategy = paymentStrategyFactory.getStrategy(collectionRequestDTO.getPaymentMethod());
+        PaymentStrategy strategy = paymentStrategyFactory.getStrategy(requestDTO.getPaymentMethod());
         PaymentStatus finalPaymentStatus = strategy.process(paymentRequestDTO, appData, transactionId);
 
-        // Ödeme kaydını (Entity) oluştur
-        PaymentEntity payment = PaymentEntity.builder()
-                .applicationId(collectionRequestDTO.getApplicationId())
-                .amount(collectionRequestDTO.getAmount())
-                .currency(collectionRequestDTO.getCurrency())
-                .paymentMethod(collectionRequestDTO.getPaymentMethod())
-                .paymentStatus(finalPaymentStatus)
-                .transactionId(transactionId)
-                .build();
+        PaymentEntity savedPayment = savePayment(
+                requestDTO.getApplicationId(),
+                requestDTO.getAmount(),
+                requestDTO.getCurrency(),
+                requestDTO.getPaymentMethod(),
+                finalPaymentStatus,
+                transactionId
+        );
 
-        // Taksit planlarını oluştur ve ödeme başarılıysa ilk taksiti ödendi yap
-        List<InstallmentPlanEntity> installments = createInstallmentPlans(payment, collectionRequestDTO.getInstallmentCount());
+        handleInstallmentSplittingIfPresent(savedPayment, requestDTO.getInstallmentCount());
 
-        if (!installments.isEmpty() && finalPaymentStatus == PaymentStatus.SUCCESS) {
-            installments.getFirst().setStatus(InstallmentStatus.PAID);
-        }
-
-        // Birbirine bağla ve veritabanına kaydet
-        payment.setInstallmentPlans(installments);
-        PaymentEntity savedPayment = paymentRepository.save(payment);
-
-        log.info("Application {} için tahsilat işlemi {} statüsü ile tamamlandı. Transaction ID: {}", 
-                collectionRequestDTO.getApplicationId(), 
+        log.info("Application {} için tahsilat işlemi {} statüsü ile tamamlandı. Transaction ID: {}",
+                requestDTO.getApplicationId(),
                 finalPaymentStatus,
                 transactionId);
 
@@ -103,76 +101,86 @@ public class CollectionService {
         return response;
     }
 
+    /**
+     * Başvuru servisinden detayları çekerek gerçek tahsilat işlemini yürütür ve talep edilmişse taksitlendirir.
+     *
+     * @param requestDTO Ödeme sürecini yürütmek için gerekli verileri barındıran {@link PaymentRequestDTO} nesnesi
+     * @return Gerçekleştirilen ödemenin detaylarını içeren {@link PaymentResponseDTO} nesnesi
+     * @throws BusinessException Ödeme bulunamazsa fırlatılır
+     */
     @Transactional
     public PaymentResponseDTO processCollection(PaymentRequestDTO requestDTO) {
         String transactionId = UUID.randomUUID().toString();
         log.info("Application Service'ten {} ID'li başvuru bilgileri çekiliyor...", requestDTO.getApplicationId());
 
-        // 1. Dış servisten (Application) fiyat ve müşteri bilgilerini güvenli şekilde al
         ApplicationDetailResponseDTO appData = applicationServiceClient.getApplicationDetails(requestDTO.getApplicationId());
 
-        // 2. Doğru stratejiyi fabrikadan iste ve çalıştır (Polymorphism)
-        PaymentStrategy strategy = paymentStrategyFactory.getStrategy(requestDTO.getPaymentMethod());
-        PaymentStatus finalPaymentStatus = strategy.process(requestDTO, appData, transactionId);
-
-        // 3. Ödeme kaydını (Entity) oluştur
-        PaymentEntity payment = PaymentEntity.builder()
+        PaymentRequestDTO iyzicoRequest = PaymentRequestDTO.builder()
                 .applicationId(requestDTO.getApplicationId())
-                .amount(appData.getPrice())
-                .currency(appData.getCurrency())
-                .paymentMethod(requestDTO.getPaymentMethod())
-                .paymentStatus(finalPaymentStatus)
-                .transactionId(transactionId)
+                .paymentMethod(appData.getPaymentMethod())
+                .installmentCount(1)
+                .cardId(appData.getCardId())
+                .cvcNo(requestDTO.getCvcNo())
                 .build();
 
-        // 4. Taksit planlarını oluştur ve ödeme başarılıysa ilk taksiti ödendi yap
-        List<InstallmentPlanEntity> installments = createInstallmentPlans(payment, requestDTO.getInstallmentCount());
+        PaymentStrategy strategy = paymentStrategyFactory.getStrategy(appData.getPaymentMethod());
+        PaymentStatus finalPaymentStatus = strategy.process(iyzicoRequest, appData, transactionId);
 
-        if (!installments.isEmpty() && finalPaymentStatus == PaymentStatus.SUCCESS) {
-            installments.getFirst().setStatus(InstallmentStatus.PAID);
-        }
+        PaymentEntity savedPayment = savePayment(
+                requestDTO.getApplicationId(),
+                appData.getPrice(),
+                appData.getCurrency(),
+                appData.getPaymentMethod(),
+                finalPaymentStatus,
+                transactionId
+        );
 
-        // 5. Birbirine bağla ve veritabanına kaydet
-        payment.setInstallmentPlans(installments);
-        PaymentEntity savedPayment = paymentRepository.save(payment);
+        handleInstallmentSplittingIfPresent(savedPayment, requestDTO.getInstallmentCount());
 
         log.info("{} ID'li başvuru için tahsilat işlemi {} statüsü ile tamamlandı.", requestDTO.getApplicationId(), finalPaymentStatus);
 
         return paymentMapper.toResponseDTO(savedPayment);
     }
 
-    private List<InstallmentPlanEntity> createInstallmentPlans(PaymentEntity payment, int installmentCount) {
-        BusinessRuleValidator.isTrue(installmentCount > 0, "Taksit sayısı 0'dan büyük olmalıdır!", HttpStatus.BAD_REQUEST);
+    /**
+     * Ödeme entity nesnesini oluşturur ve veritabanına kaydeder.
+     */
+    private PaymentEntity savePayment(Long applicationId, BigDecimal amount, String currency,
+                                      com.example.collection_service.enums.PaymentMethod paymentMethod,
+                                      PaymentStatus paymentStatus, String transactionId) {
+        PaymentEntity payment = PaymentEntity.builder()
+                .applicationId(applicationId)
+                .amount(amount)
+                .currency(currency)
+                .paymentMethod(paymentMethod)
+                .paymentStatus(paymentStatus)
+                .transactionId(transactionId)
+                .build();
 
-        BigDecimal totalAmount = payment.getAmount();
-
-        // Taksitleri aşağı yuvarlayarak bölüyoruz (Örn: 100 / 3 = 33.33)
-        BigDecimal baseInstallmentAmount = totalAmount.divide(BigDecimal.valueOf(installmentCount), 2, RoundingMode.DOWN);
-
-        // Kalan küsuratı buluyoruz (Örn: 100 - (33.33 * 3) = 0.01)
-        BigDecimal remainder = totalAmount.subtract(baseInstallmentAmount.multiply(BigDecimal.valueOf(installmentCount)));
-
-        List<InstallmentPlanEntity> plans = new ArrayList<>(installmentCount);
-        LocalDate today = LocalDate.now(clock);
-
-        for (int i = 1; i <= installmentCount; i++) {
-            // Son taksit ise kalan küsuratı ekle
-            BigDecimal currentAmount = (i == installmentCount)
-                    ? baseInstallmentAmount.add(remainder)
-                    : baseInstallmentAmount;
-
-            plans.add(InstallmentPlanEntity.builder()
-                    .payment(payment)
-                    .installmentNo(i)
-                    .amount(currentAmount)
-                    .dueDate(today.plusMonths((long) i - 1))
-                    .status(InstallmentStatus.UNPAID)
-                    .build());
-        }
-
-        return plans;
+        return paymentRepository.save(payment);
     }
 
+    /**
+     * Taksit sayısı 1'den büyükse, ödemeyi taksitlere bölen süreci tetikler.
+     */
+    private void handleInstallmentSplittingIfPresent(PaymentEntity payment, Integer installmentCount) {
+        if (installmentCount != null && installmentCount > 1) {
+            installmentService.splitPaymentIntoInstallments(payment.getId(), installmentCount);
+
+            PaymentEntity updatedPayment = paymentRepository.findById(payment.getId())
+                    .orElseThrow(() -> new BusinessException("Ödeme bulunamadı", HttpStatus.NOT_FOUND));
+
+            payment.setInstallmentPlans(updatedPayment.getInstallmentPlans());
+        }
+    }
+
+    /**
+     * Belirtilen başvuru ID'sine ait en güncel ödeme bilgilerini getirir.
+     *
+     * @param applicationId Ödeme bilgileri sorgulanacak başvurunun benzersiz ID'si
+     * @return Bulunan ödemenin detaylarını içeren {@link PaymentResponseDTO} nesnesi
+     * @throws BusinessException Başvuruya ait ödeme kaydı bulunamazsa fırlatılır
+     */
     public PaymentResponseDTO getPaymentByApplicationId(Long applicationId) {
         log.info("{} ID'li başvuruya ait ödeme bilgileri getiriliyor...", applicationId);
 
@@ -182,6 +190,12 @@ public class CollectionService {
         return paymentMapper.toResponseDTO(payment);
     }
 
+    /**
+     * Ödeme statüsüne karşılık gelen kullanıcı dostu durum mesajını döner.
+     *
+     * @param status Durumu değerlendirilecek {@link PaymentStatus} nesnesi
+     * @return Duruma uygun açıklayıcı metin
+     */
     private String getStatusMessage(PaymentStatus status) {
         return switch (status) {
             case SUCCESS -> "Tahsilat işlemi başarıyla tamamlandı.";

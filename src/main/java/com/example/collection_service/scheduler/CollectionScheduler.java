@@ -13,11 +13,11 @@ public class CollectionScheduler {
 
     private final BatchCollectionService batchCollectionService;
 
-    @Scheduled(cron = "0 49 16 * * ?", zone = "Europe/Istanbul")
+    @Scheduled(cron = "0 15 9 * * ?", zone = "Europe/Istanbul")
     public void scheduleDailyCollections() {
-        log.info("Zamanlanmış görev tetiklendi: Sabah 09:15 tahsilatları başlatılıyor...");
+        log.info("Zamanlanmış görev tetiklendi: Sabah 9:15 tahsilatları başlatılıyor...");
 
-        // Controller'a istek atmak yerine direkt servisi çağırıyoruz. (Daha performanslı ve güvenli)
         batchCollectionService.processDailyDueCollections();
     }
-}
+}//mail atma farklı service , doküman servisi (makbuz) şu kadart alınmıştır attack etme pdf oluşturma
+//sözleşme bilgilerini de atmak lazım mailden, policy service yapılcak.

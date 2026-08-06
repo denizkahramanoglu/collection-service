@@ -1,8 +1,8 @@
 package com.example.collection_service.dto;
 
 import com.example.collection_service.enums.PaymentMethod;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Positive;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -19,14 +19,12 @@ public class PaymentRequestDTO {
 
     @NotNull(message = "Application ID boş olamaz")
     private Long applicationId;
+    private String cvcNo;
+    private Integer installmentCount;
 
-    @NotNull(message = "Ödeme yöntemi seçilmelidir")
+    @JsonIgnore
     private PaymentMethod paymentMethod;
 
-    @NotNull(message = "Taksit sayısı boş olamaz")
-    @Positive(message = "Taksit sayısı 1 veya daha büyük olmalıdır")
-    private Integer installmentCount;
-    private String cvcNo;
+    @JsonIgnore
     private Long cardId;
-
 }

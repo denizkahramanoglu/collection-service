@@ -30,14 +30,16 @@ public class CreditCardPaymentStrategy implements PaymentStrategy {
     @Override
     public PaymentStatus process(PaymentRequestDTO requestDTO, ApplicationDetailResponseDTO appData, String transactionId) {
 
-        // 1. İş Kuralı: Yabancı para birimlerinde taksit yapılamaz
-        boolean isForeignCurrencyInstallment = !"TRY".equalsIgnoreCase(appData.getCurrency()) && requestDTO.getInstallmentCount() > 1;
-        BusinessRuleValidator.isFalse(isForeignCurrencyInstallment, "TRY dışındaki para birimleri için taksit yapılamaz!", HttpStatus.BAD_REQUEST);
+
+        if (requestDTO.getCvcNo() == null || requestDTO.getCvcNo().trim().isEmpty()) {
+            throw new BusinessException("Kredi kartı ile ödemelerde CVC numarası zorunludur!", HttpStatus.BAD_REQUEST);
+        }
 
         // 2. Kart Seçimi Kontrolü
         if (requestDTO.getCardId() == null) {
             throw new BusinessException("Kredi kartı ile ödemelerde kart seçimi zorunludur!", HttpStatus.BAD_REQUEST);
         }
+
 
         // 3. Müşterinin kartları arasından seçilen kartı bulma
         CustomerCardResponseDTO selectedCard = appData.getCustomer().getCards().stream()

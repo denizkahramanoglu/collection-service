@@ -1,6 +1,7 @@
 package com.example.collection_service.controller;
 
 import com.example.collection_service.service.BatchCollectionService;
+import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -14,7 +15,7 @@ public class BatchCollectionController {
 
     private final BatchCollectionService batchCollectionService;
 
-
+    @Operation(summary = "Günlük Tahsilat Sürecini Tetikler")
     @PostMapping("/run-daily")
     public ResponseEntity<String> triggerDailyCollections() {
         batchCollectionService.processDailyDueCollections();

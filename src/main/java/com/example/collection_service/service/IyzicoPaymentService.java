@@ -5,12 +5,9 @@ import com.example.collection_service.util.NetworkUtil;
 import com.iyzipay.Options;
 import com.iyzipay.model.*;
 import com.iyzipay.request.CreatePaymentRequest;
-import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
@@ -22,6 +19,15 @@ public class IyzicoPaymentService {
 
     private final Options options;
 
+    /**
+     * Ana ödeme taleplerini İyzico ödeme gateway'i üzerinden işleme alır ve karta kaydetme opsiyonunu işaretler.
+     *
+     * @param transactionId İşlemi takip etmek için üretilen benzersiz işlem ID'si
+     * @param requestDTO    Ödeme detaylarını ve kart CVC bilgisini içeren {@link PaymentRequestDTO} nesnesi
+     * @param appData       Başvuru, müşteri ve ürün detaylarını barındıran {@link ApplicationDetailResponseDTO} nesnesi
+     * @param selectedCard  Ödeme yapılacak kartın bilgilerini içeren {@link CustomerCardResponseDTO} nesnesi
+     * @return İyzico API yanıtını içeren {@link Payment} nesnesi
+     */
     public Payment payWithIyzico(String transactionId, PaymentRequestDTO requestDTO, ApplicationDetailResponseDTO appData, CustomerCardResponseDTO selectedCard) {
 
         PaymentCard paymentCard = createPaymentCard(appData, selectedCard, requestDTO.getCvcNo());
@@ -40,6 +46,17 @@ public class IyzicoPaymentService {
         log.info("[IYZICO] {} ID'li islem gonderiliyor. Tutar: {}", transactionId, appData.getPrice());
         return Payment.create(request, options);
     }
+
+    /**
+     * Belirtilen tekil taksit tutarını İyzico ödeme gateway'i üzerinden tahsil eder.
+     *
+     * @param transactionId İşlemi takip etmek için üretilen benzersiz işlem ID'si
+     * @param price         Tahsil edilecek taksit tutarı
+     * @param appData       Başvuru, müşteri ve ürün detaylarını barındıran {@link ApplicationDetailResponseDTO} nesnesi
+     * @param selectedCard  Ödeme yapılacak kartın bilgilerini içeren {@link CustomerCardResponseDTO} nesnesi
+     * @param cvc           Karta ait güvenlik (CVC) numarası
+     * @return İyzico API yanıtını içeren {@link Payment} nesnesi
+     */
     public Payment paySingleInstallmentWithIyzico(String transactionId, BigDecimal price, ApplicationDetailResponseDTO appData, CustomerCardResponseDTO selectedCard, String cvc) {
 
 
@@ -55,6 +72,18 @@ public class IyzicoPaymentService {
 
         return payment;
     }
+
+    /**
+     * İyzico ödeme isteği için gerekli olan alıcı, adres, sepet ve ödeme kartı detaylarını yapılandırır.
+     *
+     * @param transactionId  İşlemi takip etmek için üretilen benzersiz işlem ID'si
+     * @param price          Ödenecek net tutar
+     * @param installment    Taksit sayısı
+     * @param appData        Başvuru ve müşteri detaylarını barındıran {@link ApplicationDetailResponseDTO} nesnesi
+     * @param paymentCard    Yapılandırılmış İyzico ödeme kartı nesnesi
+     * @param basketItemName Sepet kalemi için açıklayıcı ürün adı
+     * @return Yapılandırılmış {@link CreatePaymentRequest} nesnesi
+     */
     private CreatePaymentRequest buildIyzicoRequest(String transactionId, BigDecimal price, int installment, ApplicationDetailResponseDTO appData, PaymentCard paymentCard, String basketItemName) {
 
         CreatePaymentRequest request = new CreatePaymentRequest();
@@ -112,6 +141,15 @@ public class IyzicoPaymentService {
 
         return request;
     }
+
+    /**
+     * Müşteri ve kart verilerini kullanarak İyzico'nun talep ettiği formatta {@link PaymentCard} nesnesi oluşturur.
+     *
+     * @param appData      Müşteri ad soyad bilgilerini içeren {@link ApplicationDetailResponseDTO} nesnesi
+     * @param selectedCard Kart numarası, son kullanma ayı ve yılı bilgilerini içeren {@link CustomerCardResponseDTO} nesnesi
+     * @param cvc          Güvenlik (CVC) numarası
+     * @return Oluşturulan {@link PaymentCard} nesnesi
+     */
     private PaymentCard createPaymentCard(ApplicationDetailResponseDTO appData, CustomerCardResponseDTO selectedCard, String cvc) {
         String fullName = appData.getCustomer().getFirstName() + " " + appData.getCustomer().getLastName();
 

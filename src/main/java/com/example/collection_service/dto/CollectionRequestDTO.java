@@ -33,8 +33,6 @@ public class CollectionRequestDTO {
     @NotNull(message = "Ödeme yöntemi seçilmelidir")
     private PaymentMethod paymentMethod;
 
-    @NotNull(message = "Taksit sayısı boş olamaz")
-    @Positive(message = "Taksit sayısı 1 veya daha büyük olmalıdır")
     private Integer installmentCount;
 
     private Long cardId;
