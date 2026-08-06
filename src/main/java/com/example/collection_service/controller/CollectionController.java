@@ -41,11 +41,12 @@ public class CollectionController {
         PaymentResponseDTO response = collectionService.getPaymentByApplicationId(applicationId);
         return ResponseEntity.ok(response);
     }
+
+    @Operation(summary = "Ödeme Kaydına Poliçe ID'sini Bağla")
     @PutMapping("/payments/{paymentId}/link-policy")
-    public ResponseEntity<Void> linkPolicyToPayment(
-            @PathVariable Long paymentId,
-            @RequestParam Long policyId) {
+    public ResponseEntity<Void> linkPolicyToPayment(@PathVariable Long paymentId, @RequestParam Long policyId) {
         collectionService.linkPolicyToPayment(paymentId, policyId);
+
         return ResponseEntity.ok().build();
     }
 }
