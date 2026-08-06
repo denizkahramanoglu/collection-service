@@ -19,5 +19,5 @@ public class CollectionScheduler {
 
         batchCollectionService.processDailyDueCollections();
     }
-}//mail atma farklı service , doküman servisi (makbuz) şu kadart alınmıştır attack etme pdf oluşturma
+}//mail atma farklı service , doküman servisi (makbuz) şu kadart alınmıştır attach etme pdf oluşturma
 //sözleşme bilgilerini de atmak lazım mailden, policy service yapılcak.

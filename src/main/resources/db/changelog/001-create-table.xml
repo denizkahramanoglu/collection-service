@@ -93,4 +93,13 @@
         </createTable>
     </changeSet>
 
+    <!-- 3. PAYMENTS TABLOSUNA POLICY_ID KOLONU EKLEME -->
+    <changeSet id="add-policy-id-to-payments" author="deniz">
+        <addColumn tableName="payments">
+            <column name="policy_id" type="BIGINT">
+                <constraints nullable="true"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
 </databaseChangeLog>

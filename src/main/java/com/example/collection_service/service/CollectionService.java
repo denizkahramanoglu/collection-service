@@ -141,6 +141,24 @@ public class CollectionService {
 
         return paymentMapper.toResponseDTO(savedPayment);
     }
+    /**
+     * Başarıyla oluşturulan poliçenin ID'sini ilgili ödeme kaydına bağlar.
+     *
+     * @param paymentId Güncellenecek ödemenin ID'si
+     * @param policyId  Bağlanacak poliçe ID'si
+     */
+    @Transactional
+    public void linkPolicyToPayment(Long paymentId, Long policyId) {
+        log.info("{} ID'li ödemeye {} ID'li poliçe bağlanıyor...", paymentId, policyId);
+
+        PaymentEntity payment = paymentRepository.findById(paymentId)
+                .orElseThrow(() -> new BusinessException("Ödeme bulunamadı! ID: " + paymentId, HttpStatus.NOT_FOUND));
+
+        payment.setPolicyId(policyId);
+        paymentRepository.save(payment);
+
+        log.info("{} ID'li ödeme başarıyla {} ID'li poliçeye bağlandı.", paymentId, policyId);
+    }
 
     /**
      * Ödeme entity nesnesini oluşturur ve veritabanına kaydeder.

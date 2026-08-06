@@ -41,6 +41,9 @@ public class PaymentEntity extends BaseEntity {
     @Column(name = "payment_status", nullable = false, length = 20)
     private PaymentStatus paymentStatus;
 
+    @Column(name = "policy_id")
+    private Long policyId;
+
     @Column(name = "transaction_id", unique = true, length = 100)
     private String transactionId;
 
