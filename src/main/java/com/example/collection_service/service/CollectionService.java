@@ -12,6 +12,7 @@ import com.example.collection_service.enums.InstallmentStatus;
 import com.example.collection_service.enums.PaymentStatus;
 import com.example.collection_service.exception.BusinessException;
 import com.example.collection_service.mapper.PaymentMapper;
+import com.example.collection_service.producer.PaymentProducer;
 import com.example.collection_service.repository.PaymentRepository;
 import com.example.collection_service.strategy.PaymentStrategy;
 import com.example.collection_service.strategy.PaymentStrategyFactory;
@@ -43,6 +44,7 @@ public class CollectionService {
     private final ApplicationServiceClient applicationServiceClient;
     private final PaymentStrategyFactory paymentStrategyFactory;
     private final InstallmentService installmentService;
+    private final PaymentProducer paymentProducer;
 
     /**
      * Yeni bir tahsilat süreci başlatır, ödeme stratejisini çalıştırır, ana ödeme kaydını oluşturur
@@ -90,6 +92,22 @@ public class CollectionService {
         );
 
         handleInstallmentSplittingIfPresent(savedPayment, requestDTO.getInstallmentCount());
+        if (PaymentStatus.SUCCESS.equals(finalPaymentStatus)) {
+            com.example.collection_service.event.PaymentCompletedEvent event =
+                    com.example.collection_service.event.PaymentCompletedEvent.builder()
+                            .eventId(UUID.randomUUID().toString())
+                            .paymentId(savedPayment.getId())
+                            .applicationId(savedPayment.getApplicationId())
+                            .amount(appData.getPrice())
+                            .currency(appData.getCurrency())
+                            .paymentMethod(appData.getPaymentMethod() != null ? appData.getPaymentMethod().name() : null)
+                            .installmentCount(requestDTO.getInstallmentCount())
+                            .transactionId(transactionId)
+                            .paymentDate(java.time.LocalDateTime.now(clock))
+                            .build();
+
+            paymentProducer.publishPaymentCompletedEvent(event);
+        }
 
         log.info("Application {} için tahsilat işlemi {} statüsü ile tamamlandı. Transaction ID: {}",
                 requestDTO.getApplicationId(),
@@ -136,6 +154,23 @@ public class CollectionService {
         );
 
         handleInstallmentSplittingIfPresent(savedPayment, requestDTO.getInstallmentCount());
+
+        if (PaymentStatus.SUCCESS.equals(finalPaymentStatus)) {
+            com.example.collection_service.event.PaymentCompletedEvent event =
+                    com.example.collection_service.event.PaymentCompletedEvent.builder()
+                            .eventId(UUID.randomUUID().toString())
+                            .paymentId(savedPayment.getId())
+                            .applicationId(savedPayment.getApplicationId())
+                            .amount(appData.getPrice())
+                            .currency(appData.getCurrency())
+                            .paymentMethod(appData.getPaymentMethod() != null ? appData.getPaymentMethod().name() : null)
+                            .installmentCount(requestDTO.getInstallmentCount())
+                            .transactionId(transactionId)
+                            .paymentDate(java.time.LocalDateTime.now(clock))
+                            .build();
+
+            paymentProducer.publishPaymentCompletedEvent(event);
+        }
 
         log.info("{} ID'li başvuru için tahsilat işlemi {} statüsü ile tamamlandı.", requestDTO.getApplicationId(), finalPaymentStatus);
 
